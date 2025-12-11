@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8" />
-  <title>CPR 姿勢偵測 + 實際 BPM V2.5</title>
+  <title>CPR 姿勢偵測 + 實際 BPM V2.6</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -49,7 +49,7 @@
       display: none;
     }
 
-    /* 左上角：壓胸次數 + 平均 BPM + 紅點 */
+    /* 左上角疊加的壓胸資訊 */
     .motion-overlay {
       position: absolute;
       top: 1rem;
@@ -64,8 +64,7 @@
 
     #motion-count {
       font-weight: 700;
-      /* 大字，使用視窗寬度做比例，遠距離也看得清楚 */
-      font-size: 4vw; /* 約等於原本 0.9rem 的多倍放大 */
+      font-size: 4vw;
       text-shadow: 0 0 12px rgba(0, 0, 0, 0.8);
     }
 
@@ -91,7 +90,55 @@
       box-shadow: 0 0 24px rgba(255, 70, 70, 0.9);
     }
 
-    /* 底部控制列：只保留目標節拍器 */
+    /* 右側 Start / Stop 控制區（疊在畫面右側） */
+    .side-controls {
+      position: absolute;
+      top: 50%;
+      right: 1rem;
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      z-index: 10;
+    }
+
+    .side-btn {
+      min-width: 120px;
+      border: none;
+      border-radius: 999px;
+      padding: 0.6rem 1rem;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      background: #1f2933;
+      color: #f5f5f5;
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+      transition: transform 0.1s ease, box-shadow 0.1s ease, background 0.15s ease, opacity 0.15s ease;
+    }
+    .side-btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.6);
+      background: #27333f;
+    }
+    .side-btn:disabled {
+      opacity: 0.5;
+      cursor: default;
+      box-shadow: none;
+    }
+    .side-btn.start {
+      background: #16a34a;
+    }
+    .side-btn.start:hover:not(:disabled) {
+      background: #22c55e;
+    }
+    .side-btn.stop {
+      background: #b91c1c;
+    }
+    .side-btn.stop:hover:not(:disabled) {
+      background: #ef4444;
+    }
+
+    /* 底部控制列：目標節拍器 */
     .control-bar {
       flex: 0 0 110px;
       padding: 0.75rem 1.5rem;
@@ -181,6 +228,13 @@
       #motion-bpm {
         font-size: 4.5vw;
       }
+      .side-controls {
+        right: 0.5rem;
+      }
+      .side-btn {
+        min-width: 100px;
+        font-size: 0.9rem;
+      }
     }
   </style>
 </head>
@@ -191,18 +245,24 @@
         <video id="video" playsinline></video>
         <canvas id="output"></canvas>
 
-        <!-- 左上角疊加的壓胸資訊 -->
+        <!-- 左上角壓胸資訊 -->
         <div class="motion-overlay">
           <div id="motion-count">壓胸次數：0</div>
           <div id="motion-bpm">平均：-- BPM</div>
           <div id="motion-light"></div>
+        </div>
+
+        <!-- 右側 Start / Stop 控制 -->
+        <div class="side-controls">
+          <button id="start-btn" class="side-btn start">開始按壓</button>
+          <button id="stop-btn" class="side-btn stop" disabled>停止按壓</button>
         </div>
       </div>
     </div>
 
     <div class="control-bar">
       <div class="control-left">
-        <div>CPR 姿勢偵測 + 實際 BPM V2.5</div>
+        <div>CPR 姿勢偵測 + 實際 BPM V2.6</div>
         <div class="status" id="status">
           狀態：<span class="error">初始化中…</span>
         </div>
@@ -301,16 +361,20 @@
     const motionBpmEl = document.getElementById("motion-bpm");
     const motionCountEl = document.getElementById("motion-count");
     const motionLightEl = document.getElementById("motion-light");
+    const startBtn = document.getElementById("start-btn");
+    const stopBtn = document.getElementById("stop-btn");
 
-    let motionBpm = null;        // 總平均 BPM
+    // 狀態：idle / tracking / stopped
+    let detectState = "idle";
+
+    let motionBpm = null;        // 整段平均 BPM
     let compressionCount = 0;    // 壓胸次數
-    let sessionStartTime = null; // 這一段壓胸開始的時間
+    let sessionStartTime = null; // 第一下一直到底的時間
     let lastBottomTime = null;   // 上一次到底時間（秒）
     let lastY = null;
     let lastTime = null;
     let goingDown = false;
     let motionLightTimeout = null;
-    let sessionActive = false;
 
     function setMotionLight(on) {
       if (!motionLightEl) return;
@@ -330,14 +394,52 @@
       }
     }
 
+    function updateStartStopUI() {
+      if (detectState === "tracking") {
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+      } else {
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+      }
+    }
+
+    // 按「開始按壓」：清零並開始 Tracking
+    startBtn.addEventListener("click", () => {
+      detectState = "tracking";
+      compressionCount = 0;
+      motionBpm = null;
+      sessionStartTime = null;
+      lastBottomTime = null;
+      lastY = null;
+      lastTime = null;
+      goingDown = false;
+      setMotionLight(false);
+      updateMotionCountDisplay();
+      updateMotionBpmDisplay();
+      updateStartStopUI();
+    });
+
+    // 按「停止按壓」：停止 Tracking，但保留結果在畫面上
+    stopBtn.addEventListener("click", () => {
+      detectState = "stopped";
+      resetMotionTrackingOnly();
+      updateStartStopUI();
+    });
+
     function registerBottomEvent() {
+      if (detectState !== "tracking") return;
+
       const now = performance.now() / 1000;
 
-      // 第一次壓到底：開啟一個「session」
-      if (!sessionActive) {
-        sessionActive = true;
-        compressionCount = 0;
+      // 避免同一下被重複計算：兩次到底至少要間隔 0.25 秒（240 BPM 上限）
+      if (lastBottomTime !== null && (now - lastBottomTime) < 0.25) {
+        return;
+      }
+
+      if (sessionStartTime === null) {
         sessionStartTime = now;
+        compressionCount = 0;
         motionBpm = null;
       }
 
@@ -361,13 +463,17 @@
     }
 
     function trackMotion(y) {
+      if (detectState !== "tracking") return;
+
       const now = performance.now() / 1000;
       if (lastY === null) {
         lastY = y;
         lastTime = now;
         return;
       }
-      const dy = y - lastY; // >0 往下（畫面座標）
+
+      const dy = y - lastY; // >0 表示往畫面下移動（往壓下方向）
+
       const downThreshold = 1.5;
       const upThreshold = 1.5;
 
@@ -375,7 +481,7 @@
         goingDown = true;
       }
 
-      // 從往下轉為往上：視為「到底瞬間」
+      // 從往下轉成往上：視為到底瞬間
       if (goingDown && dy < -upThreshold) {
         goingDown = false;
         registerBottomEvent();
@@ -389,7 +495,7 @@
       lastY = null;
       lastTime = null;
       goingDown = false;
-      // 不清空 compressionCount / motionBpm，數字會保留在最後一次壓胸的結果
+      // 不清空 compressionCount / motionBpm，讓數字停留在畫面上
     }
 
     // ========= MediaPipe Pose + 鏡像顯示 + 手臂平滑（去掉手肘線） =========
@@ -589,7 +695,7 @@
           }
         }
 
-        // 用「選到的那一側肩膀」來追蹤上下移動，估算實際 BPM
+        // Tracking 狀態下，用「選到的肩膀」追蹤上下移動
         if (activeShoulder && activeShoulder.visibility > minVis) {
           trackMotion(activeShoulder.y);
         } else {
@@ -645,6 +751,9 @@
       } else {
         initCamera();
       }
+      updateStartStopUI();
+      updateMotionCountDisplay();
+      updateMotionBpmDisplay();
     });
   </script>
 </body>
