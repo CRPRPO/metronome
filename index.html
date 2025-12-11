@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8" />
-  <title>CPR 姿勢偵測 + 節拍器 V2.3</title>
+  <title>CPR 姿勢偵測 + 實際 BPM V2.4</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -21,9 +21,10 @@
       height: 100%;
     }
 
+    /* 視訊區滿版（扣掉底部控制列） */
     .video-area {
       flex: 1 1 auto;
-      height: calc(100vh - 110px); /* 保留底部控制列高度 */
+      height: calc(100vh - 110px);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -45,9 +46,10 @@
     }
 
     video {
-      display: none; /* 只當輸入，不顯示 */
+      display: none;
     }
 
+    /* 底部控制列 */
     .control-bar {
       flex: 0 0 110px;
       padding: 0.75rem 1.5rem;
@@ -122,21 +124,21 @@
       font-size: 1.1rem;
     }
 
-    /* BPM 顯示 + 大紅圈節拍點 */
-    .bpm-display {
+    /* 實際壓胸 BPM + 大紅圈節拍點（依動作亮） */
+    .motion-display {
       display: flex;
       flex-direction: column;
       align-items: center;
-      margin-right: 0.75rem;
+      margin-left: 1rem;
       gap: 0.25rem;
     }
-    #bpm-value {
+    #motion-bpm {
       font-size: 0.9rem;
       color: #e5e7f2;
-      min-width: 70px;
+      min-width: 80px;
       text-align: center;
     }
-    #beat-light {
+    #motion-light {
       width: 30px;
       height: 30px;
       border-radius: 999px;
@@ -145,7 +147,7 @@
       box-shadow: 0 0 0 rgba(255, 80, 80, 0);
       transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.08s ease;
     }
-    #beat-light.flash {
+    #motion-light.on {
       transform: scale(1.3);
       background: #ff0000;
       box-shadow: 0 0 18px rgba(255, 70, 70, 0.9);
@@ -174,18 +176,14 @@
 
     <div class="control-bar">
       <div class="control-left">
-        <div>CPR 姿勢偵測 + 節拍器 V2.3</div>
+        <div>CPR 姿勢偵測 + 實際 BPM V2.4</div>
         <div class="status" id="status">
           狀態：<span class="error">初始化中…</span>
         </div>
       </div>
 
       <div class="metronome">
-        <div class="bpm-display">
-          <div id="bpm-value">-- BPM</div>
-          <div id="beat-light"></div>
-        </div>
-        <div class="metronome-label">節拍器（一次只能啟動一個）：</div>
+        <div class="metronome-label">目標節拍器（100 / 110 / 120）：</div>
         <div class="buttons">
           <button class="bpm-btn" data-bpm="100">
             <span class="text">100</span>
@@ -200,6 +198,11 @@
             <span class="icon">▶</span>
           </button>
         </div>
+
+        <div class="motion-display">
+          <div id="motion-bpm">實際：-- BPM</div>
+          <div id="motion-light"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -210,19 +213,10 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
 
   <script>
-    // ========= 節拍器 + BPM 顯示 =========
+    // ========= 節拍器（只負責聲音與按鈕狀態） =========
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     let currentBpm = null;
     let intervalId = null;
-
-    const bpmValueEl = document.getElementById("bpm-value");
-    const beatLightEl = document.getElementById("beat-light");
-
-    function flashBeatLight() {
-      if (!beatLightEl) return;
-      beatLightEl.classList.add("flash");
-      setTimeout(() => beatLightEl.classList.remove("flash"), 80);
-    }
 
     function playClick() {
       const osc = audioCtx.createOscillator();
@@ -236,7 +230,6 @@
       gain.connect(audioCtx.destination);
       osc.start(now);
       osc.stop(now + 0.05);
-      flashBeatLight();
     }
 
     function updateButtons() {
@@ -253,14 +246,6 @@
       });
     }
 
-    function updateBpmDisplay() {
-      if (currentBpm) {
-        bpmValueEl.textContent = currentBpm + " BPM";
-      } else {
-        bpmValueEl.textContent = "-- BPM";
-      }
-    }
-
     function stopMetronome() {
       if (intervalId !== null) {
         clearInterval(intervalId);
@@ -268,7 +253,6 @@
       }
       currentBpm = null;
       updateButtons();
-      updateBpmDisplay();
     }
 
     function startMetronome(bpm) {
@@ -279,7 +263,6 @@
       playClick();
       intervalId = setInterval(playClick, interval);
       updateButtons();
-      updateBpmDisplay();
     }
 
     document.querySelectorAll(".bpm-btn").forEach(btn => {
@@ -293,12 +276,90 @@
       });
     });
 
-    // ========= MediaPipe Pose + 鏡像顯示 =========
+    // ========= 實際壓胸 BPM ＋ 紅點指示 =========
+    const motionBpmEl = document.getElementById("motion-bpm");
+    const motionLightEl = document.getElementById("motion-light");
+    let motionBpm = null;
+    let lastBottomTime = null;
+    let lastY = null;
+    let lastTime = null;
+    let goingDown = false;
+    let motionLightTimeout = null;
+
+    function setMotionLight(on) {
+      if (!motionLightEl) return;
+      if (on) motionLightEl.classList.add("on");
+      else motionLightEl.classList.remove("on");
+    }
+
+    function updateMotionBpmDisplay() {
+      if (motionBpm && isFinite(motionBpm)) {
+        motionBpmEl.textContent = "實際：" + motionBpm.toFixed(0) + " BPM";
+      } else {
+        motionBpmEl.textContent = "實際：-- BPM";
+      }
+    }
+
+    function registerBottomEvent() {
+      const now = performance.now() / 1000;
+      if (lastBottomTime !== null) {
+        const interval = now - lastBottomTime;
+        // 篩掉太快或太慢的雜訊（>240 或 <30 就不算）
+        if (interval > 0.25 && interval < 2.0) {
+          const instBpm = 60 / interval;
+          if (!motionBpm) {
+            motionBpm = instBpm;
+          } else {
+            // 做一點平滑，避免瞬間跳動太大
+            motionBpm = motionBpm * 0.7 + instBpm * 0.3;
+          }
+          updateMotionBpmDisplay();
+        }
+      }
+      lastBottomTime = now;
+
+      if (motionLightTimeout) clearTimeout(motionLightTimeout);
+      setMotionLight(true);
+      motionLightTimeout = setTimeout(() => setMotionLight(false), 200);
+    }
+
+    function trackMotion(y) {
+      const now = performance.now() / 1000;
+      if (lastY === null) {
+        lastY = y;
+        lastTime = now;
+        return;
+      }
+      const dy = y - lastY; // >0 往畫面下（往身體接近地面方向）
+      const downThreshold = 1.5;
+      const upThreshold = 1.5;
+
+      if (dy > downThreshold) {
+        goingDown = true;
+      }
+
+      // 從往下轉為往上，視為「到底」一瞬間
+      if (goingDown && dy < -upThreshold) {
+        goingDown = false;
+        registerBottomEvent();
+      }
+
+      lastY = y;
+      lastTime = now;
+    }
+
+    function resetMotionTracking() {
+      lastY = null;
+      lastTime = null;
+      goingDown = false;
+    }
+
+    // ========= MediaPipe Pose + 鏡像顯示 + 手臂平滑 =========
     const videoElement = document.getElementById("video");
     const canvasElement = document.getElementById("output");
     const canvasCtx = canvasElement.getContext("2d");
     const statusEl = document.getElementById("status");
-    const mirror = true; // 鏡像顯示
+    const mirror = true;
 
     function setStatus(text, ok = true) {
       statusEl.innerHTML = `狀態：<span class="${ok ? "ok" : "error"}">${text}</span>`;
@@ -310,7 +371,27 @@
       canvasElement.height = rect.height;
     }
 
-    // 直接用畫素座標畫線
+    // 手臂點位平滑紀錄
+    const smoothPoints = {};
+
+    function smoothPoint(key, p, alpha = 0.4) {
+      if (!p) {
+        smoothPoints[key] = null;
+        return null;
+      }
+      if (!smoothPoints[key]) {
+        smoothPoints[key] = { ...p };
+        return smoothPoints[key];
+      }
+      const s = smoothPoints[key];
+      s.x = alpha * p.x + (1 - alpha) * s.x;
+      s.y = alpha * p.y + (1 - alpha) * s.y;
+      s.visibility = alpha * (p.visibility ?? 1) + (1 - alpha) * (s.visibility ?? 1);
+      s.z = alpha * (p.z ?? 0) + (1 - alpha) * (s.z ?? 0);
+      return s;
+    }
+
+    // 用像素座標畫線與標籤
     function drawSegmentPx(a, b, color = "red", lineWidth = 6) {
       canvasCtx.beginPath();
       canvasCtx.moveTo(a.x, a.y);
@@ -332,7 +413,7 @@
       canvasCtx.fillText(text, x, y - 18);
     }
 
-    // 計算某側手臂與鏡頭距離，z 越小越靠近鏡頭
+    // 深度計算仍用原始 landmark（z 值）
     function armDepthScore(shoulder, elbow, wrist, minVis) {
       if (
         !shoulder || !elbow || !wrist ||
@@ -346,7 +427,10 @@
     }
 
     function onResults(results) {
-      if (!videoElement.videoWidth) return;
+      if (!videoElement.videoWidth) {
+        resetMotionTracking();
+        return;
+      }
 
       resizeCanvasToContainer();
 
@@ -356,7 +440,6 @@
       const imgW = img.width;
       const imgH = img.height;
 
-      // 依比例放大到滿版（可能有黑邊，但不變形）
       const scale = Math.min(canvasW / imgW, canvasH / imgH);
       const destW = imgW * scale;
       const destH = imgH * scale;
@@ -366,7 +449,7 @@
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, canvasW, canvasH);
 
-      // 先畫鏡像影像
+      // 畫鏡像影像
       if (mirror) {
         canvasCtx.save();
         canvasCtx.translate(canvasW, 0);
@@ -389,7 +472,6 @@
       if (results.poseLandmarks && results.poseLandmarks.length) {
         const lm = results.poseLandmarks;
 
-        // 原始 landmark（用來看 visibility / z）
         const leftShoulder = lm[11];
         const rightShoulder = lm[12];
         const leftElbow = lm[13];
@@ -401,7 +483,6 @@
 
         const minVis = 0.3;
 
-        // 將 normalized 座標投影到 canvas（包含 letterbox + 鏡像）
         function project(p) {
           if (!p) return null;
           const xImg = p.x * imgW;
@@ -414,6 +495,7 @@
           return { x, y, visibility: p.visibility, z: p.z };
         }
 
+        // 投影到畫布座標
         const pLS = project(leftShoulder);
         const pRS = project(rightShoulder);
         const pLE = project(leftElbow);
@@ -423,7 +505,17 @@
         const pLH = project(leftHip);
         const pRH = project(rightHip);
 
-        // 決定顯示哪一側手臂（靠鏡頭近的那側）
+        // 平滑處理
+        const sLS = smoothPoint("LS", pLS);
+        const sRS = smoothPoint("RS", pRS);
+        const sLE = smoothPoint("LE", pLE);
+        const sRE = smoothPoint("RE", pRE);
+        const sLW = smoothPoint("LW", pLW);
+        const sRW = smoothPoint("RW", pRW);
+        const sLH = smoothPoint("LH", pLH);
+        const sRH = smoothPoint("RH", pRH);
+
+        // 選擇離鏡頭比較近的那一側手臂（用原始 z 值）
         const leftScore = armDepthScore(leftShoulder, leftElbow, leftWrist, minVis);
         const rightScore = armDepthScore(rightShoulder, rightElbow, rightWrist, minVis);
 
@@ -436,35 +528,50 @@
           side = "right";
         }
 
-        if (side === "left" && pLS && pLE && pLW && pLH) {
+        let activeShoulder = null;
+
+        if (side === "left" && sLS && sLE && sLW && sLH) {
           const color = "#00ff88";
-          if (pLS.visibility > minVis && pLH.visibility > minVis) {
-            drawSegmentPx(pLS, pLH, color, 6); // 肩膀→臀部
+          if (sLS.visibility > minVis && sLH.visibility > minVis) {
+            drawSegmentPx(sLS, sLH, color, 6); // 肩膀→臀部
           }
-          if (pLS.visibility > minVis && pLE.visibility > minVis) {
-            drawSegmentPx(pLS, pLE, color, 6);
+          if (sLS.visibility > minVis && sLE.visibility > minVis) {
+            drawSegmentPx(sLS, sLE, color, 6);
           }
-          if (pLE.visibility > minVis && pLW.visibility > minVis) {
-            drawSegmentPx(pLE, pLW, color, 6);
+          if (sLE.visibility > minVis && sLW.visibility > minVis) {
+            drawSegmentPx(sLE, sLW, color, 6);
           }
-          if (pLS.visibility > minVis) {
-            drawLabelPx("左手", pLS, color);
+          if (sLS.visibility > minVis) {
+            drawLabelPx("左手", sLS, color);
+            activeShoulder = sLS;
           }
-        } else if (side === "right" && pRS && pRE && pRW && pRH) {
+        } else if (side === "right" && sRS && sRE && sRW && sRH) {
           const color = "#ffcc00";
-          if (pRS.visibility > minVis && pRH.visibility > minVis) {
-            drawSegmentPx(pRS, pRH, color, 6); // 肩膀→臀部
+          if (sRS.visibility > minVis && sRH.visibility > minVis) {
+            drawSegmentPx(sRS, sRH, color, 6); // 肩膀→臀部
           }
-          if (pRS.visibility > minVis && pRE.visibility > minVis) {
-            drawSegmentPx(pRS, pRE, color, 6);
+          if (sRS.visibility > minVis && sRE.visibility > minVis) {
+            drawSegmentPx(sRS, sRE, color, 6);
           }
-          if (pRE.visibility > minVis && pRW.visibility > minVis) {
-            drawSegmentPx(pRE, pRW, color, 6);
+          if (sRE.visibility > minVis && sRW.visibility > minVis) {
+            drawSegmentPx(sRE, sRW, color, 6);
           }
-          if (pRS.visibility > minVis) {
-            drawLabelPx("右手", pRS, color);
+          if (sRS.visibility > minVis) {
+            drawLabelPx("右手", sRS, color);
+            activeShoulder = sRS;
           }
         }
+
+        // 用「選到的那一側肩膀」來追蹤上下移動，估算實際 BPM
+        if (activeShoulder && activeShoulder.visibility > minVis) {
+          trackMotion(activeShoulder.y);
+        } else {
+          resetMotionTracking();
+        }
+
+      } else {
+        // 沒偵測到人體
+        resetMotionTracking();
       }
 
       canvasCtx.restore();
