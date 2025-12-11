@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8" />
-  <title>CPR 姿勢偵測 + 節拍器 V2.1</title>
+  <title>CPR 姿勢偵測 + 節拍器 V2.2</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -78,6 +78,34 @@
     }
     .bpm-btn span.icon { font-size: 1.1rem; }
 
+    /* BPM 計速器 */
+    .bpm-display {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-right: 0.75rem;
+      gap: 0.15rem;
+    }
+    #bpm-value {
+      font-size: 0.9rem;
+      color: #e5e7f2;
+      min-width: 70px;
+      text-align: center;
+    }
+    #beat-light {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: #444b5f;
+      box-shadow: 0 0 0 rgba(12, 140, 255, 0.0);
+      transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.08s ease;
+    }
+    #beat-light.flash {
+      transform: scale(1.8);
+      background: #0c8cff;
+      box-shadow: 0 0 12px rgba(12, 140, 255, 0.8);
+    }
+
     @media (max-width: 640px) {
       .control-bar { flex-direction: column; align-items: flex-start; }
     }
@@ -94,13 +122,17 @@
 
     <div class="control-bar">
       <div class="control-left">
-        <div>CPR 姿勢偵測 + 節拍器 V2</div>
+        <div>CPR 姿勢偵測 + 節拍器 V2.1</div>
         <div class="status" id="status">
           狀態：<span class="error">初始化中…</span>
         </div>
       </div>
 
       <div class="metronome">
+        <div class="bpm-display">
+          <div id="bpm-value">-- BPM</div>
+          <div id="beat-light"></div>
+        </div>
         <div class="metronome-label">節拍器（一次只能啟動一個）：</div>
         <div class="buttons">
           <button class="bpm-btn" data-bpm="100">
@@ -126,10 +158,19 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
 
   <script>
-    // ========= 節拍器 =========
+    // ========= 節拍器 + BPM 計速器 =========
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     let currentBpm = null;
     let intervalId = null;
+
+    const bpmValueEl = document.getElementById("bpm-value");
+    const beatLightEl = document.getElementById("beat-light");
+
+    function flashBeatLight() {
+      if (!beatLightEl) return;
+      beatLightEl.classList.add("flash");
+      setTimeout(() => beatLightEl.classList.remove("flash"), 80);
+    }
 
     function playClick() {
       const osc = audioCtx.createOscillator();
@@ -143,6 +184,8 @@
       gain.connect(audioCtx.destination);
       osc.start(now);
       osc.stop(now + 0.05);
+
+      flashBeatLight();
     }
 
     function updateButtons() {
@@ -159,6 +202,14 @@
       });
     }
 
+    function updateBpmDisplay() {
+      if (currentBpm) {
+        bpmValueEl.textContent = currentBpm + " BPM";
+      } else {
+        bpmValueEl.textContent = "-- BPM";
+      }
+    }
+
     function stopMetronome() {
       if (intervalId !== null) {
         clearInterval(intervalId);
@@ -166,6 +217,7 @@
       }
       currentBpm = null;
       updateButtons();
+      updateBpmDisplay();
     }
 
     function startMetronome(bpm) {
@@ -176,6 +228,7 @@
       playClick();
       intervalId = setInterval(playClick, interval);
       updateButtons();
+      updateBpmDisplay();
     }
 
     document.querySelectorAll(".bpm-btn").forEach(btn => {
@@ -227,6 +280,19 @@
       canvasCtx.fillText(text, x, y - 18);
     }
 
+    // 計算某側手臂與鏡頭的「平均深度」（z 越小越靠近鏡頭）
+    function armDepthScore(shoulder, elbow, wrist, minVis) {
+      if (
+        !shoulder || !elbow || !wrist ||
+        shoulder.visibility < minVis ||
+        elbow.visibility < minVis ||
+        wrist.visibility < minVis
+      ) {
+        return Infinity;
+      }
+      return (shoulder.z + elbow.z + wrist.z) / 3;
+    }
+
     function onResults(results) {
       if (!videoElement.videoWidth) return;
       resizeCanvasToVideo();
@@ -236,33 +302,67 @@
 
       if (results.poseLandmarks && results.poseLandmarks.length) {
         const lm = results.poseLandmarks;
+
         const leftShoulder = lm[11];
         const rightShoulder = lm[12];
         const leftElbow = lm[13];
         const rightElbow = lm[14];
         const leftWrist = lm[15];
         const rightWrist = lm[16];
+        const leftHip = lm[23];
+        const rightHip = lm[24];
+
         const minVis = 0.3;
 
-        if (leftShoulder.visibility > minVis && leftElbow.visibility > minVis)
-          drawSegment(leftShoulder, leftElbow, "#00ff88");
-        if (leftElbow.visibility > minVis && leftWrist.visibility > minVis)
-          drawSegment(leftElbow, leftWrist, "#00ff88");
+        // 計算左右手臂與鏡頭距離，決定顯示哪一側
+        const leftScore = armDepthScore(leftShoulder, leftElbow, leftWrist, minVis);
+        const rightScore = armDepthScore(rightShoulder, rightElbow, rightWrist, minVis);
 
-        if (rightShoulder.visibility > minVis && rightElbow.visibility > minVis)
-          drawSegment(rightShoulder, rightElbow, "#ffcc00");
-        if (rightElbow.visibility > minVis && rightWrist.visibility > minVis)
-          drawSegment(rightElbow, rightWrist, "#ffcc00");
+        let side = null;
+        if (leftScore === Infinity && rightScore === Infinity) {
+          side = null; // 兩邊都偵測不到
+        } else if (leftScore < rightScore) {
+          side = "left";
+        } else {
+          side = "right";
+        }
 
-        if (leftShoulder.visibility > minVis)
-          drawLabel("左手", leftShoulder, "#00ff88");
-        if (rightShoulder.visibility > minVis)
-          drawLabel("右手", rightShoulder, "#ffcc00");
+        if (side === "left") {
+          const color = "#00ff88";
+
+          if (leftShoulder.visibility > minVis && leftHip.visibility > minVis) {
+            drawSegment(leftShoulder, leftHip, color, 6); // 肩膀 → 臀部
+          }
+          if (leftShoulder.visibility > minVis && leftElbow.visibility > minVis) {
+            drawSegment(leftShoulder, leftElbow, color, 6);
+          }
+          if (leftElbow.visibility > minVis && leftWrist.visibility > minVis) {
+            drawSegment(leftElbow, leftWrist, color, 6);
+          }
+          if (leftShoulder.visibility > minVis) {
+            drawLabel("左手", leftShoulder, color);
+          }
+        } else if (side === "right") {
+          const color = "#ffcc00";
+
+          if (rightShoulder.visibility > minVis && rightHip.visibility > minVis) {
+            drawSegment(rightShoulder, rightHip, color, 6); // 肩膀 → 臀部
+          }
+          if (rightShoulder.visibility > minVis && rightElbow.visibility > minVis) {
+            drawSegment(rightShoulder, rightElbow, color, 6);
+          }
+          if (rightElbow.visibility > minVis && rightWrist.visibility > minVis) {
+            drawSegment(rightElbow, rightWrist, color, 6);
+          }
+          if (rightShoulder.visibility > minVis) {
+            drawLabel("右手", rightShoulder, color);
+          }
+        }
       }
+
       canvasCtx.restore();
     }
 
-    // 這裡改成「new Pose(...)」，而不是「new Pose.Pose(...)」
     const pose = new Pose({
       locateFile: (file) =>
         `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
