@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8" />
-  <title>CPR 姿勢偵測 + 節拍器 V2.2</title>
+  <title>CPR 姿勢偵測 + 節拍器 V2.3</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -14,28 +14,42 @@
       display: flex;
       flex-direction: column;
     }
-    .app { flex: 1; display: flex; flex-direction: column; height: 100%; }
-    .video-area {
+    .app {
       flex: 1;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    .video-area {
+      flex: 1 1 auto;
+      height: calc(100vh - 110px); /* 保留底部控制列高度 */
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 0.5rem;
+      padding: 0;
     }
+
     .video-wrapper {
       position: relative;
-      max-width: 100%;
-      max-height: 100%;
-      aspect-ratio: 4 / 3;
+      width: 100%;
+      height: 100%;
       background: #000;
-      border-radius: 1rem;
       overflow: hidden;
-      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
     }
-    #output { width: 100%; height: 100%; display: block; }
-    video { display: none; }
+
+    #output {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    video {
+      display: none; /* 只當輸入，不顯示 */
+    }
 
     .control-bar {
+      flex: 0 0 110px;
       padding: 0.75rem 1.5rem;
       background: #111217;
       border-top: 1px solid #222631;
@@ -44,14 +58,42 @@
       justify-content: space-between;
       gap: 1rem;
     }
-    .control-left { display: flex; flex-direction: column; gap: 0.25rem; }
-    .status { font-size: 0.85rem; color: #b3b7c3; }
-    .status span.ok { color: #3ddc84; font-weight: 600; }
-    .status span.error { color: #ff7b7b; font-weight: 600; }
 
-    .metronome { display: flex; align-items: center; gap: 0.75rem; }
-    .metronome-label { font-size: 0.9rem; color: #b3b7c3; white-space: nowrap; }
-    .buttons { display: flex; gap: 0.5rem; }
+    .control-left {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .status {
+      font-size: 0.85rem;
+      color: #b3b7c3;
+    }
+    .status span.ok {
+      color: #3ddc84;
+      font-weight: 600;
+    }
+    .status span.error {
+      color: #ff7b7b;
+      font-weight: 600;
+    }
+
+    .metronome {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .metronome-label {
+      font-size: 0.9rem;
+      color: #b3b7c3;
+      white-space: nowrap;
+    }
+
+    .buttons {
+      display: flex;
+      gap: 0.5rem;
+    }
 
     .bpm-btn {
       border: none;
@@ -76,15 +118,17 @@
       background: #0c8cff;
       box-shadow: 0 4px 16px rgba(12, 140, 255, 0.5);
     }
-    .bpm-btn span.icon { font-size: 1.1rem; }
+    .bpm-btn span.icon {
+      font-size: 1.1rem;
+    }
 
-    /* BPM 計速器 */
+    /* BPM 顯示 + 大紅圈節拍點 */
     .bpm-display {
       display: flex;
       flex-direction: column;
       align-items: center;
       margin-right: 0.75rem;
-      gap: 0.15rem;
+      gap: 0.25rem;
     }
     #bpm-value {
       font-size: 0.9rem;
@@ -93,21 +137,29 @@
       text-align: center;
     }
     #beat-light {
-      width: 10px;
-      height: 10px;
+      width: 30px;
+      height: 30px;
       border-radius: 999px;
-      background: #444b5f;
-      box-shadow: 0 0 0 rgba(12, 140, 255, 0.0);
+      background: #4b1313;
+      border: 3px solid #ff5555;
+      box-shadow: 0 0 0 rgba(255, 80, 80, 0);
       transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.08s ease;
     }
     #beat-light.flash {
-      transform: scale(1.8);
-      background: #0c8cff;
-      box-shadow: 0 0 12px rgba(12, 140, 255, 0.8);
+      transform: scale(1.3);
+      background: #ff0000;
+      box-shadow: 0 0 18px rgba(255, 70, 70, 0.9);
     }
 
     @media (max-width: 640px) {
-      .control-bar { flex-direction: column; align-items: flex-start; }
+      .control-bar {
+        flex-direction: column;
+        align-items: flex-start;
+        height: auto;
+      }
+      .video-area {
+        height: calc(100vh - 150px);
+      }
     }
   </style>
 </head>
@@ -122,7 +174,7 @@
 
     <div class="control-bar">
       <div class="control-left">
-        <div>CPR 姿勢偵測 + 節拍器 V2.1</div>
+        <div>CPR 姿勢偵測 + 節拍器 V2.3</div>
         <div class="status" id="status">
           狀態：<span class="error">初始化中…</span>
         </div>
@@ -158,7 +210,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
 
   <script>
-    // ========= 節拍器 + BPM 計速器 =========
+    // ========= 節拍器 + BPM 顯示 =========
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     let currentBpm = null;
     let intervalId = null;
@@ -184,7 +236,6 @@
       gain.connect(audioCtx.destination);
       osc.start(now);
       osc.stop(now + 0.05);
-
       flashBeatLight();
     }
 
@@ -242,35 +293,36 @@
       });
     });
 
-    // ========= MediaPipe Pose =========
+    // ========= MediaPipe Pose + 鏡像顯示 =========
     const videoElement = document.getElementById("video");
     const canvasElement = document.getElementById("output");
     const canvasCtx = canvasElement.getContext("2d");
     const statusEl = document.getElementById("status");
+    const mirror = true; // 鏡像顯示
 
     function setStatus(text, ok = true) {
       statusEl.innerHTML = `狀態：<span class="${ok ? "ok" : "error"}">${text}</span>`;
     }
 
-    function resizeCanvasToVideo() {
-      const w = videoElement.videoWidth || 640;
-      const h = videoElement.videoHeight || 480;
-      canvasElement.width = w;
-      canvasElement.height = h;
+    function resizeCanvasToContainer() {
+      const rect = canvasElement.parentElement.getBoundingClientRect();
+      canvasElement.width = rect.width;
+      canvasElement.height = rect.height;
     }
 
-    function drawSegment(a, b, color = "red", lineWidth = 6) {
+    // 直接用畫素座標畫線
+    function drawSegmentPx(a, b, color = "red", lineWidth = 6) {
       canvasCtx.beginPath();
-      canvasCtx.moveTo(a.x * canvasElement.width, a.y * canvasElement.height);
-      canvasCtx.lineTo(b.x * canvasElement.width, b.y * canvasElement.height);
+      canvasCtx.moveTo(a.x, a.y);
+      canvasCtx.lineTo(b.x, b.y);
       canvasCtx.lineWidth = lineWidth;
       canvasCtx.strokeStyle = color;
       canvasCtx.stroke();
     }
 
-    function drawLabel(text, point, color = "yellow") {
-      const x = point.x * canvasElement.width;
-      const y = point.y * canvasElement.height;
+    function drawLabelPx(text, point, color = "yellow") {
+      const x = point.x;
+      const y = point.y;
       canvasCtx.font = "24px system-ui";
       canvasCtx.textAlign = "center";
       canvasCtx.textBaseline = "bottom";
@@ -280,7 +332,7 @@
       canvasCtx.fillText(text, x, y - 18);
     }
 
-    // 計算某側手臂與鏡頭的「平均深度」（z 越小越靠近鏡頭）
+    // 計算某側手臂與鏡頭距離，z 越小越靠近鏡頭
     function armDepthScore(shoulder, elbow, wrist, minVis) {
       if (
         !shoulder || !elbow || !wrist ||
@@ -295,14 +347,49 @@
 
     function onResults(results) {
       if (!videoElement.videoWidth) return;
-      resizeCanvasToVideo();
+
+      resizeCanvasToContainer();
+
+      const canvasW = canvasElement.width;
+      const canvasH = canvasElement.height;
+      const img = results.image;
+      const imgW = img.width;
+      const imgH = img.height;
+
+      // 依比例放大到滿版（可能有黑邊，但不變形）
+      const scale = Math.min(canvasW / imgW, canvasH / imgH);
+      const destW = imgW * scale;
+      const destH = imgH * scale;
+      const offsetX = (canvasW - destW) / 2;
+      const offsetY = (canvasH - destH) / 2;
+
       canvasCtx.save();
-      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.clearRect(0, 0, canvasW, canvasH);
+
+      // 先畫鏡像影像
+      if (mirror) {
+        canvasCtx.save();
+        canvasCtx.translate(canvasW, 0);
+        canvasCtx.scale(-1, 1);
+        const mirroredOffsetX = canvasW - offsetX - destW;
+        canvasCtx.drawImage(
+          img,
+          0, 0, imgW, imgH,
+          mirroredOffsetX, offsetY, destW, destH
+        );
+        canvasCtx.restore();
+      } else {
+        canvasCtx.drawImage(
+          img,
+          0, 0, imgW, imgH,
+          offsetX, offsetY, destW, destH
+        );
+      }
 
       if (results.poseLandmarks && results.poseLandmarks.length) {
         const lm = results.poseLandmarks;
 
+        // 原始 landmark（用來看 visibility / z）
         const leftShoulder = lm[11];
         const rightShoulder = lm[12];
         const leftElbow = lm[13];
@@ -314,48 +401,68 @@
 
         const minVis = 0.3;
 
-        // 計算左右手臂與鏡頭距離，決定顯示哪一側
+        // 將 normalized 座標投影到 canvas（包含 letterbox + 鏡像）
+        function project(p) {
+          if (!p) return null;
+          const xImg = p.x * imgW;
+          const yImg = p.y * imgH;
+          let x = offsetX + xImg * scale;
+          let y = offsetY + yImg * scale;
+          if (mirror) {
+            x = canvasW - x;
+          }
+          return { x, y, visibility: p.visibility, z: p.z };
+        }
+
+        const pLS = project(leftShoulder);
+        const pRS = project(rightShoulder);
+        const pLE = project(leftElbow);
+        const pRE = project(rightElbow);
+        const pLW = project(leftWrist);
+        const pRW = project(rightWrist);
+        const pLH = project(leftHip);
+        const pRH = project(rightHip);
+
+        // 決定顯示哪一側手臂（靠鏡頭近的那側）
         const leftScore = armDepthScore(leftShoulder, leftElbow, leftWrist, minVis);
         const rightScore = armDepthScore(rightShoulder, rightElbow, rightWrist, minVis);
 
         let side = null;
         if (leftScore === Infinity && rightScore === Infinity) {
-          side = null; // 兩邊都偵測不到
+          side = null;
         } else if (leftScore < rightScore) {
           side = "left";
         } else {
           side = "right";
         }
 
-        if (side === "left") {
+        if (side === "left" && pLS && pLE && pLW && pLH) {
           const color = "#00ff88";
-
-          if (leftShoulder.visibility > minVis && leftHip.visibility > minVis) {
-            drawSegment(leftShoulder, leftHip, color, 6); // 肩膀 → 臀部
+          if (pLS.visibility > minVis && pLH.visibility > minVis) {
+            drawSegmentPx(pLS, pLH, color, 6); // 肩膀→臀部
           }
-          if (leftShoulder.visibility > minVis && leftElbow.visibility > minVis) {
-            drawSegment(leftShoulder, leftElbow, color, 6);
+          if (pLS.visibility > minVis && pLE.visibility > minVis) {
+            drawSegmentPx(pLS, pLE, color, 6);
           }
-          if (leftElbow.visibility > minVis && leftWrist.visibility > minVis) {
-            drawSegment(leftElbow, leftWrist, color, 6);
+          if (pLE.visibility > minVis && pLW.visibility > minVis) {
+            drawSegmentPx(pLE, pLW, color, 6);
           }
-          if (leftShoulder.visibility > minVis) {
-            drawLabel("左手", leftShoulder, color);
+          if (pLS.visibility > minVis) {
+            drawLabelPx("左手", pLS, color);
           }
-        } else if (side === "right") {
+        } else if (side === "right" && pRS && pRE && pRW && pRH) {
           const color = "#ffcc00";
-
-          if (rightShoulder.visibility > minVis && rightHip.visibility > minVis) {
-            drawSegment(rightShoulder, rightHip, color, 6); // 肩膀 → 臀部
+          if (pRS.visibility > minVis && pRH.visibility > minVis) {
+            drawSegmentPx(pRS, pRH, color, 6); // 肩膀→臀部
           }
-          if (rightShoulder.visibility > minVis && rightElbow.visibility > minVis) {
-            drawSegment(rightShoulder, rightElbow, color, 6);
+          if (pRS.visibility > minVis && pRE.visibility > minVis) {
+            drawSegmentPx(pRS, pRE, color, 6);
           }
-          if (rightElbow.visibility > minVis && rightWrist.visibility > minVis) {
-            drawSegment(rightElbow, rightWrist, color, 6);
+          if (pRE.visibility > minVis && pRW.visibility > minVis) {
+            drawSegmentPx(pRE, pRW, color, 6);
           }
-          if (rightShoulder.visibility > minVis) {
-            drawLabel("右手", rightShoulder, color);
+          if (pRS.visibility > minVis) {
+            drawLabelPx("右手", pRS, color);
           }
         }
       }
