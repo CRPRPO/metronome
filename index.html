@@ -2,12 +2,9 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8" />
-  <title>CPR 姿勢偵測 + 節拍器 V2</title>
+  <title>CPR 姿勢偵測 + 節拍器 V2.1</title>
   <style>
-    * {
-      box-sizing: border-box;
-    }
-
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -17,14 +14,7 @@
       display: flex;
       flex-direction: column;
     }
-
-    .app {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      height: 100%;
-    }
-
+    .app { flex: 1; display: flex; flex-direction: column; height: 100%; }
     .video-area {
       flex: 1;
       display: flex;
@@ -32,7 +22,6 @@
       justify-content: center;
       padding: 0.5rem;
     }
-
     .video-wrapper {
       position: relative;
       max-width: 100%;
@@ -43,18 +32,9 @@
       overflow: hidden;
       box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
     }
+    #output { width: 100%; height: 100%; display: block; }
+    video { display: none; }
 
-    #output {
-      width: 100%;
-      height: 100%;
-      display: block;
-    }
-
-    video {
-      display: none; /* 只用來當輸入，不顯示本身 */
-    }
-
-    /* 底部 1 列控制區（約佔畫面底部 1/4，高度可依需要調整） */
     .control-bar {
       padding: 0.75rem 1.5rem;
       background: #111217;
@@ -64,44 +44,14 @@
       justify-content: space-between;
       gap: 1rem;
     }
+    .control-left { display: flex; flex-direction: column; gap: 0.25rem; }
+    .status { font-size: 0.85rem; color: #b3b7c3; }
+    .status span.ok { color: #3ddc84; font-weight: 600; }
+    .status span.error { color: #ff7b7b; font-weight: 600; }
 
-    .control-left {
-      display: flex;
-      flex-direction: column;
-      gap: 0.25rem;
-    }
-
-    .status {
-      font-size: 0.85rem;
-      color: #b3b7c3;
-    }
-
-    .status span.ok {
-      color: #3ddc84;
-      font-weight: 600;
-    }
-
-    .status span.error {
-      color: #ff7b7b;
-      font-weight: 600;
-    }
-
-    .metronome {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-    }
-
-    .metronome-label {
-      font-size: 0.9rem;
-      color: #b3b7c3;
-      white-space: nowrap;
-    }
-
-    .buttons {
-      display: flex;
-      gap: 0.5rem;
-    }
+    .metronome { display: flex; align-items: center; gap: 0.75rem; }
+    .metronome-label { font-size: 0.9rem; color: #b3b7c3; white-space: nowrap; }
+    .buttons { display: flex; gap: 0.5rem; }
 
     .bpm-btn {
       border: none;
@@ -117,27 +67,19 @@
       gap: 0.35rem;
       transition: transform 0.1s ease, box-shadow 0.1s ease, background 0.15s ease;
     }
-
     .bpm-btn:hover {
       transform: translateY(-1px);
       box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
       background: #343949;
     }
-
     .bpm-btn.active {
       background: #0c8cff;
       box-shadow: 0 4px 16px rgba(12, 140, 255, 0.5);
     }
-
-    .bpm-btn span.icon {
-      font-size: 1.1rem;
-    }
+    .bpm-btn span.icon { font-size: 1.1rem; }
 
     @media (max-width: 640px) {
-      .control-bar {
-        flex-direction: column;
-        align-items: flex-start;
-      }
+      .control-bar { flex-direction: column; align-items: flex-start; }
     }
   </style>
 </head>
@@ -184,7 +126,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
 
   <script>
-    // ========= 節拍器邏輯 =========
+    // ========= 節拍器 =========
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     let currentBpm = null;
     let intervalId = null;
@@ -192,17 +134,13 @@
     function playClick() {
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
-
       osc.type = "square";
       osc.frequency.value = 1000;
-
       const now = audioCtx.currentTime;
       gain.gain.setValueAtTime(0.25, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
-
       osc.connect(gain);
       gain.connect(audioCtx.destination);
-
       osc.start(now);
       osc.stop(now + 0.05);
     }
@@ -232,14 +170,9 @@
 
     function startMetronome(bpm) {
       stopMetronome();
-
       currentBpm = bpm;
       const interval = 60000 / bpm;
-
-      if (audioCtx.state === "suspended") {
-        audioCtx.resume();
-      }
-
+      if (audioCtx.state === "suspended") audioCtx.resume();
       playClick();
       intervalId = setInterval(playClick, interval);
       updateButtons();
@@ -256,7 +189,7 @@
       });
     });
 
-    // ========= MediaPipe Pose + 視訊 =========
+    // ========= MediaPipe Pose =========
     const videoElement = document.getElementById("video");
     const canvasElement = document.getElementById("output");
     const canvasCtx = canvasElement.getContext("2d");
@@ -267,7 +200,6 @@
     }
 
     function resizeCanvasToVideo() {
-      // 依照 video 實際大小調整 canvas
       const w = videoElement.videoWidth || 640;
       const h = videoElement.videoHeight || 480;
       canvasElement.width = w;
@@ -286,68 +218,52 @@
     function drawLabel(text, point, color = "yellow") {
       const x = point.x * canvasElement.width;
       const y = point.y * canvasElement.height;
-
       canvasCtx.font = "24px system-ui";
       canvasCtx.textAlign = "center";
       canvasCtx.textBaseline = "bottom";
       canvasCtx.fillStyle = "rgba(0,0,0,0.6)";
       canvasCtx.fillRect(x - 40, y - 40, 80, 28);
-
       canvasCtx.fillStyle = color;
       canvasCtx.fillText(text, x, y - 18);
     }
 
     function onResults(results) {
       if (!videoElement.videoWidth) return;
-
       resizeCanvasToVideo();
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-
-      // 先畫原始影像
       canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
       if (results.poseLandmarks && results.poseLandmarks.length) {
         const lm = results.poseLandmarks;
-
         const leftShoulder = lm[11];
         const rightShoulder = lm[12];
         const leftElbow = lm[13];
         const rightElbow = lm[14];
         const leftWrist = lm[15];
         const rightWrist = lm[16];
-
         const minVis = 0.3;
 
-        // 左手：肩膀→手肘→手腕
-        if (leftShoulder.visibility > minVis && leftElbow.visibility > minVis) {
+        if (leftShoulder.visibility > minVis && leftElbow.visibility > minVis)
           drawSegment(leftShoulder, leftElbow, "#00ff88");
-        }
-        if (leftElbow.visibility > minVis && leftWrist.visibility > minVis) {
+        if (leftElbow.visibility > minVis && leftWrist.visibility > minVis)
           drawSegment(leftElbow, leftWrist, "#00ff88");
-        }
 
-        // 右手：肩膀→手肘→手腕
-        if (rightShoulder.visibility > minVis && rightElbow.visibility > minVis) {
+        if (rightShoulder.visibility > minVis && rightElbow.visibility > minVis)
           drawSegment(rightShoulder, rightElbow, "#ffcc00");
-        }
-        if (rightElbow.visibility > minVis && rightWrist.visibility > minVis) {
+        if (rightElbow.visibility > minVis && rightWrist.visibility > minVis)
           drawSegment(rightElbow, rightWrist, "#ffcc00");
-        }
 
-        // 在肩膀上方標示左右手
-        if (leftShoulder.visibility > minVis) {
+        if (leftShoulder.visibility > minVis)
           drawLabel("左手", leftShoulder, "#00ff88");
-        }
-        if (rightShoulder.visibility > minVis) {
+        if (rightShoulder.visibility > minVis)
           drawLabel("右手", rightShoulder, "#ffcc00");
-        }
       }
-
       canvasCtx.restore();
     }
 
-    const pose = new Pose.Pose({
+    // 這裡改成「new Pose(...)」，而不是「new Pose.Pose(...)」
+    const pose = new Pose({
       locateFile: (file) =>
         `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
     });
@@ -367,7 +283,6 @@
     async function initCamera() {
       try {
         setStatus("請允許瀏覽器使用攝影機…", false);
-
         camera = new Camera(videoElement, {
           onFrame: async () => {
             await pose.send({ image: videoElement });
@@ -375,7 +290,6 @@
           width: 640,
           height: 480
         });
-
         await camera.start();
         setStatus("攝影機與姿勢偵測已啟動", true);
       } catch (err) {
@@ -384,9 +298,12 @@
       }
     }
 
-    // 進入頁面就自動啟動視訊與 MediaPipe
     window.addEventListener("load", () => {
-      initCamera();
+      if (typeof Pose === "undefined") {
+        setStatus("Pose 模組載入失敗，請檢查網路或 CDN", false);
+      } else {
+        initCamera();
+      }
     });
   </script>
 </body>
