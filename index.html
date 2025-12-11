@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8" />
-  <title>CPR 姿勢偵測 + 實際 BPM V2.6</title>
+  <title>CPR 姿勢偵測 + 實際 BPM V2.7</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -21,7 +21,6 @@
       height: 100%;
     }
 
-    /* 視訊區滿版（扣掉底部控制列） */
     .video-area {
       flex: 1 1 auto;
       height: calc(100vh - 110px);
@@ -44,12 +43,9 @@
       height: 100%;
       display: block;
     }
+    video { display: none; }
 
-    video {
-      display: none;
-    }
-
-    /* 左上角疊加的壓胸資訊 */
+    /* 左上角疊加資訊 */
     .motion-overlay {
       position: absolute;
       top: 1rem;
@@ -74,6 +70,12 @@
       text-shadow: 0 0 12px rgba(0, 0, 0, 0.8);
     }
 
+    #motion-hint {
+      font-weight: 600;
+      font-size: 2.4vw;
+      text-shadow: 0 0 12px rgba(0, 0, 0, 0.8);
+    }
+
     #motion-light {
       margin-top: 0.3rem;
       width: 40px;
@@ -90,7 +92,7 @@
       box-shadow: 0 0 24px rgba(255, 70, 70, 0.9);
     }
 
-    /* 右側 Start / Stop 控制區（疊在畫面右側） */
+    /* 右側 Start / Stop 控制 */
     .side-controls {
       position: absolute;
       top: 50%;
@@ -138,7 +140,7 @@
       background: #ef4444;
     }
 
-    /* 底部控制列：目標節拍器 */
+    /* 底部控制列 */
     .control-bar {
       flex: 0 0 110px;
       padding: 0.75rem 1.5rem;
@@ -222,12 +224,9 @@
       .video-area {
         height: calc(100vh - 150px);
       }
-      #motion-count {
-        font-size: 6vw;
-      }
-      #motion-bpm {
-        font-size: 4.5vw;
-      }
+      #motion-count { font-size: 6vw; }
+      #motion-bpm { font-size: 4.5vw; }
+      #motion-hint { font-size: 3.6vw; }
       .side-controls {
         right: 0.5rem;
       }
@@ -249,6 +248,7 @@
         <div class="motion-overlay">
           <div id="motion-count">壓胸次數：0</div>
           <div id="motion-bpm">平均：-- BPM</div>
+          <div id="motion-hint"></div>
           <div id="motion-light"></div>
         </div>
 
@@ -262,7 +262,7 @@
 
     <div class="control-bar">
       <div class="control-left">
-        <div>CPR 姿勢偵測 + 實際 BPM V2.6</div>
+        <div>CPR 姿勢偵測 + 即時 BPM V2.7</div>
         <div class="status" id="status">
           狀態：<span class="error">初始化中…</span>
         </div>
@@ -294,7 +294,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
 
   <script>
-    // ========= 節拍器（只負責聲音與按鈕狀態） =========
+    // ========= 節拍器（聲音與按鈕） =========
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     let currentBpm = null;
     let intervalId = null;
@@ -357,9 +357,10 @@
       });
     });
 
-    // ========= 實際壓胸 BPM ＋ 紅點指示 ＋ 計數器 =========
+    // ========= 壓胸偵測 + 即時 BPM =========
     const motionBpmEl = document.getElementById("motion-bpm");
     const motionCountEl = document.getElementById("motion-count");
+    const motionHintEl = document.getElementById("motion-hint");
     const motionLightEl = document.getElementById("motion-light");
     const startBtn = document.getElementById("start-btn");
     const stopBtn = document.getElementById("stop-btn");
@@ -367,14 +368,14 @@
     // 狀態：idle / tracking / stopped
     let detectState = "idle";
 
-    let motionBpm = null;        // 整段平均 BPM
-    let compressionCount = 0;    // 壓胸次數
-    let sessionStartTime = null; // 第一下一直到底的時間
-    let lastBottomTime = null;   // 上一次到底時間（秒）
+    let compressionCount = 0;       // 總壓胸次數
     let lastY = null;
     let lastTime = null;
     let goingDown = false;
     let motionLightTimeout = null;
+
+    // 最近到底時間點（秒），用來計算「最後 10 下」的平均 BPM
+    const bottomTimes = [];
 
     function setMotionLight(on) {
       if (!motionLightEl) return;
@@ -386,11 +387,20 @@
       motionCountEl.textContent = "壓胸次數：" + compressionCount;
     }
 
-    function updateMotionBpmDisplay() {
-      if (motionBpm && isFinite(motionBpm)) {
-        motionBpmEl.textContent = "平均：" + motionBpm.toFixed(0) + " BPM";
+    function updateMotionBpmAndHintDisplay(bpm) {
+      if (bpm && isFinite(bpm)) {
+        motionBpmEl.textContent = "平均：" + bpm.toFixed(0) + " BPM";
+
+        if (bpm < 100) {
+          motionHintEl.textContent = "速度偏慢，請加快";
+        } else if (bpm > 120) {
+          motionHintEl.textContent = "速度偏快，請放慢";
+        } else {
+          motionHintEl.textContent = "速度合適，請維持";
+        }
       } else {
         motionBpmEl.textContent = "平均：-- BPM";
+        motionHintEl.textContent = "";
       }
     }
 
@@ -404,28 +414,55 @@
       }
     }
 
-    // 按「開始按壓」：清零並開始 Tracking
+    // 開始按壓：清零並開始追蹤
     startBtn.addEventListener("click", () => {
       detectState = "tracking";
       compressionCount = 0;
-      motionBpm = null;
-      sessionStartTime = null;
-      lastBottomTime = null;
       lastY = null;
       lastTime = null;
       goingDown = false;
       setMotionLight(false);
+      bottomTimes.length = 0; // 清空 recent buffer
       updateMotionCountDisplay();
-      updateMotionBpmDisplay();
+      updateMotionBpmAndHintDisplay(null);
       updateStartStopUI();
     });
 
-    // 按「停止按壓」：停止 Tracking，但保留結果在畫面上
+    // 停止按壓：停止追蹤，保留當前數字
     stopBtn.addEventListener("click", () => {
       detectState = "stopped";
       resetMotionTrackingOnly();
       updateStartStopUI();
     });
+
+    function computeRecentBpm() {
+      // 用「最近最多 10 下」計算平均速度
+      const n = bottomTimes.length;
+      if (n < 3) {
+        // 少於三下不給數字（避免太亂）
+        return null;
+      }
+
+      const maxBeats = Math.min(10, n);
+      const times = bottomTimes.slice(-maxBeats);
+
+      let intervals = [];
+      for (let i = 1; i < times.length; i++) {
+        const dt = times[i] - times[i - 1];
+        if (dt > 0.2 && dt < 2.0) { // 篩掉極端值（>300 或 <30 BPM）
+          intervals.push(dt);
+        }
+      }
+
+      if (intervals.length === 0) return null;
+
+      const sum = intervals.reduce((a, b) => a + b, 0);
+      const avg = sum / intervals.length;
+      if (avg <= 0) return null;
+
+      const bpm = 60 / avg;
+      return bpm;
+    }
 
     function registerBottomEvent() {
       if (detectState !== "tracking") return;
@@ -433,29 +470,21 @@
       const now = performance.now() / 1000;
 
       // 避免同一下被重複計算：兩次到底至少要間隔 0.25 秒（240 BPM 上限）
-      if (lastBottomTime !== null && (now - lastBottomTime) < 0.25) {
+      if (bottomTimes.length > 0 && (now - bottomTimes[bottomTimes.length - 1]) < 0.25) {
         return;
-      }
-
-      if (sessionStartTime === null) {
-        sessionStartTime = now;
-        compressionCount = 0;
-        motionBpm = null;
       }
 
       compressionCount += 1;
       updateMotionCountDisplay();
 
-      // 以「整段壓胸」計算平均 BPM
-      if (sessionStartTime !== null && compressionCount > 1) {
-        const elapsed = now - sessionStartTime;
-        if (elapsed > 0) {
-          motionBpm = (compressionCount / elapsed) * 60;
-          updateMotionBpmDisplay();
-        }
+      bottomTimes.push(now);
+      // 保留最多 20 個時間點（足夠計算最近 10 下）
+      if (bottomTimes.length > 20) {
+        bottomTimes.splice(0, bottomTimes.length - 20);
       }
 
-      lastBottomTime = now;
+      const recentBpm = computeRecentBpm();
+      updateMotionBpmAndHintDisplay(recentBpm);
 
       if (motionLightTimeout) clearTimeout(motionLightTimeout);
       setMotionLight(true);
@@ -472,7 +501,7 @@
         return;
       }
 
-      const dy = y - lastY; // >0 表示往畫面下移動（往壓下方向）
+      const dy = y - lastY; // >0 表示往畫面下（壓下方向）
 
       const downThreshold = 1.5;
       const upThreshold = 1.5;
@@ -481,7 +510,7 @@
         goingDown = true;
       }
 
-      // 從往下轉成往上：視為到底瞬間
+      // 從往下轉為往上：視為到底瞬間
       if (goingDown && dy < -upThreshold) {
         goingDown = false;
         registerBottomEvent();
@@ -495,10 +524,10 @@
       lastY = null;
       lastTime = null;
       goingDown = false;
-      // 不清空 compressionCount / motionBpm，讓數字停留在畫面上
+      // 不清空 compressionCount / bottomTimes / 當前 BPM，畫面停留
     }
 
-    // ========= MediaPipe Pose + 鏡像顯示 + 手臂平滑（去掉手肘線） =========
+    // ========= MediaPipe Pose + 鏡像顯示 + 手臂平滑 =========
     const videoElement = document.getElementById("video");
     const canvasElement = document.getElementById("output");
     const canvasCtx = canvasElement.getContext("2d");
@@ -515,7 +544,6 @@
       canvasElement.height = rect.height;
     }
 
-    // 手臂點位平滑紀錄
     const smoothPoints = {};
 
     function smoothPoint(key, p, alpha = 0.4) {
@@ -556,7 +584,6 @@
       canvasCtx.fillText(text, x, y - 18);
     }
 
-    // 深度計算仍用原始 landmark（z 值）
     function armDepthScore(shoulder, elbow, wrist, minVis) {
       if (
         !shoulder || !elbow || !wrist ||
@@ -592,7 +619,6 @@
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, canvasW, canvasH);
 
-      // 畫鏡像影像
       if (mirror) {
         canvasCtx.save();
         canvasCtx.translate(canvasW, 0);
@@ -638,7 +664,6 @@
           return { x, y, visibility: p.visibility, z: p.z };
         }
 
-        // 投影到畫布座標
         const pLS = project(leftShoulder);
         const pRS = project(rightShoulder);
         const pLW = project(leftWrist);
@@ -646,7 +671,6 @@
         const pLH = project(leftHip);
         const pRH = project(rightHip);
 
-        // 平滑處理（肩膀 / 手腕 / 臀部）
         const sLS = smoothPoint("LS", pLS);
         const sRS = smoothPoint("RS", pRS);
         const sLW = smoothPoint("LW", pLW);
@@ -654,7 +678,6 @@
         const sLH = smoothPoint("LH", pLH);
         const sRH = smoothPoint("RH", pRH);
 
-        // 選擇離鏡頭比較近的那一側手臂（用原始 z 值）
         const leftScore = armDepthScore(leftShoulder, leftElbow, leftWrist, minVis);
         const rightScore = armDepthScore(rightShoulder, rightElbow, rightWrist, minVis);
 
@@ -672,10 +695,10 @@
         if (side === "left" && sLS && sLW && sLH) {
           const color = "#00ff88";
           if (sLS.visibility > minVis && sLH.visibility > minVis) {
-            drawSegmentPx(sLS, sLH, color, 6); // 肩膀→臀部
+            drawSegmentPx(sLS, sLH, color, 6);
           }
           if (sLS.visibility > minVis && sLW.visibility > minVis) {
-            drawSegmentPx(sLS, sLW, color, 6); // 肩膀→手腕
+            drawSegmentPx(sLS, sLW, color, 6);
           }
           if (sLS.visibility > minVis) {
             drawLabelPx("左手", sLS, color);
@@ -684,10 +707,10 @@
         } else if (side === "right" && sRS && sRW && sRH) {
           const color = "#ffcc00";
           if (sRS.visibility > minVis && sRH.visibility > minVis) {
-            drawSegmentPx(sRS, sRH, color, 6); // 肩膀→臀部
+            drawSegmentPx(sRS, sRH, color, 6);
           }
           if (sRS.visibility > minVis && sRW.visibility > minVis) {
-            drawSegmentPx(sRS, sRW, color, 6); // 肩膀→手腕
+            drawSegmentPx(sRS, sRW, color, 6);
           }
           if (sRS.visibility > minVis) {
             drawLabelPx("右手", sRS, color);
@@ -695,7 +718,6 @@
           }
         }
 
-        // Tracking 狀態下，用「選到的肩膀」追蹤上下移動
         if (activeShoulder && activeShoulder.visibility > minVis) {
           trackMotion(activeShoulder.y);
         } else {
@@ -703,7 +725,6 @@
         }
 
       } else {
-        // 沒偵測到人體，但保留既有數據
         resetMotionTrackingOnly();
       }
 
@@ -753,7 +774,7 @@
       }
       updateStartStopUI();
       updateMotionCountDisplay();
-      updateMotionBpmDisplay();
+      updateMotionBpmAndHintDisplay(null);
     });
   </script>
 </body>
