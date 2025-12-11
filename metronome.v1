@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>簡易節拍器</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #111;
+      color: #f5f5f5;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+    }
+
+    h1 {
+      margin-bottom: 1rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+
+    .container {
+      background: #1d1d1d;
+      padding: 2rem 2.5rem;
+      border-radius: 1.5rem;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+      text-align: center;
+    }
+
+    .buttons {
+      display: flex;
+      gap: 1rem;
+      margin-top: 1rem;
+      justify-content: center;
+    }
+
+    .bpm-btn {
+      border: none;
+      border-radius: 999px;
+      padding: 0.9rem 1.6rem;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      background: #333;
+      color: #f5f5f5;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      transition: transform 0.1s ease, box-shadow 0.1s ease, background 0.2s ease;
+    }
+
+    .bpm-btn span.icon {
+      font-size: 1.2rem;
+    }
+
+    .bpm-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+      background: #444;
+    }
+
+    .bpm-btn.active {
+      background: #0c8cff;
+      box-shadow: 0 6px 20px rgba(12, 140, 255, 0.5);
+    }
+
+    .label {
+      font-size: 0.9rem;
+      color: #bbb;
+      margin-top: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>節拍器</h1>
+    <div class="label">一次只能啟動一個節拍。再按一次同一個按鈕即可停止。</div>
+    <div class="buttons">
+      <button class="bpm-btn" data-bpm="100">
+        <span class="text">100 BPM</span>
+        <span class="icon">▶</span>
+      </button>
+      <button class="bpm-btn" data-bpm="110">
+        <span class="text">110 BPM</span>
+        <span class="icon">▶</span>
+      </button>
+      <button class="bpm-btn" data-bpm="120">
+        <span class="text">120 BPM</span>
+        <span class="icon">▶</span>
+      </button>
+    </div>
+  </div>
+
+  <script>
+    // 建立一個 AudioContext 來產生「喀」聲
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    let currentBpm = null;
+    let intervalId = null;
+    let currentButton = null;
+
+    function playClick() {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+
+      osc.type = "square";
+      osc.frequency.value = 1000; // 點擊聲頻率
+
+      gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
+
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.05);
+    }
+
+    function updateButtons() {
+      document.querySelectorAll(".bpm-btn").forEach(btn => {
+        const bpm = parseInt(btn.dataset.bpm, 10);
+        const icon = btn.querySelector(".icon");
+
+        if (bpm === currentBpm) {
+          btn.classList.add("active");
+          icon.textContent = "■"; // 停止符號
+        } else {
+          btn.classList.remove("active");
+          icon.textContent = "▶"; // 播放符號
+        }
+      });
+    }
+
+    function stopMetronome() {
+      if (intervalId !== null) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+      currentBpm = null;
+      currentButton = null;
+      updateButtons();
+    }
+
+    function startMetronome(bpm, button) {
+      // 若已有節拍在跑，先停掉（確保一次只有一個在跑）
+      stopMetronome();
+
+      currentBpm = bpm;
+      currentButton = button;
+
+      const interval = 60000 / bpm; // 毫秒
+
+      if (audioCtx.state === "suspended") {
+        audioCtx.resume();
+      }
+
+      // 立即先打一下
+      playClick();
+
+      // 之後依 BPM 間隔打
+      intervalId = setInterval(playClick, interval);
+
+      updateButtons();
+    }
+
+    document.querySelectorAll(".bpm-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const bpm = parseInt(btn.dataset.bpm, 10);
+
+        // 如果點的是目前正在播放的按鈕，就停止
+        if (currentBpm === bpm) {
+          stopMetronome();
+        } else {
+          // 否則切換到新的 BPM（保證不會有兩個同時在跑）
+          startMetronome(bpm, btn);
+        }
+      });
+    });
+  </script>
+</body>
+</html>
